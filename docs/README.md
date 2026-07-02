@@ -10,6 +10,7 @@ Aremi(동선) 프로젝트 문서 모음. 실행/구조/현재 기능은 루트 
 | [`GET-KEYS.md`](GET-KEYS.md) | 카카오·ODsay·TMap 키 발급/설정 (초보자용) | 실행 |
 | [`going-native.md`](going-native.md) | 웹앱 → 모바일 앱 (Capacitor vs React Native) | 실행/계획 |
 | [`backend.md`](backend.md) | 백엔드가 해야 할 일 (프록시·인증·동기화·사진·푸시) | 계획 |
+| [`deploy-vercel.md`](deploy-vercel.md) | Vercel 배포 (링크로 실사용 테스트) | 실행 |
 | [`publishing.md`](publishing.md) | 배포 2단계 (내부 테스트 → 스토어 출시) | 실행/계획 |
 
 ## 지금 상태 한 줄
