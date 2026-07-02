@@ -347,18 +347,39 @@ function sortByTime(a: Place, b: Place): number {
 function packColumns(
   events: Place[]
 ): { ev: Place; col: number; cols: number }[] {
-  const sorted = [...events].sort(sortByTime);
+  // 시작 시각순 정렬 후, 겹치는 이벤트들끼리 '클러스터'로 묶어 그 안에서만 열을 나눈다.
+  const items = events
+    .map((ev) => {
+      const s = hmToMin(ev.startTime) ?? 0;
+      const e = Math.max(hmToMin(ev.endTime) ?? s + 60, s + 1);
+      return { ev, s, e, col: 0 };
+    })
+    .sort((a, b) => a.s - b.s || a.e - b.e);
+
+  const result: { ev: Place; col: number; cols: number }[] = [];
+  let cluster: (typeof items)[number][] = [];
+  let clusterEnd = -Infinity;
   const colEnd: number[] = [];
-  const placed = sorted.map((ev) => {
-    const s = hmToMin(ev.startTime) ?? 0;
-    const e = hmToMin(ev.endTime) ?? s + 60;
+
+  const flush = () => {
+    const cols = Math.max(1, ...cluster.map((it) => it.col + 1));
+    for (const it of cluster) result.push({ ev: it.ev, col: it.col, cols });
+    cluster = [];
+    colEnd.length = 0;
+  };
+
+  for (const it of items) {
+    // 현재 클러스터의 어떤 이벤트와도 안 겹치면 클러스터를 끊는다
+    if (cluster.length && it.s >= clusterEnd) flush();
     let c = 0;
-    while (c < colEnd.length && colEnd[c] > s) c++;
-    colEnd[c] = e;
-    return { ev, col: c };
-  });
-  const cols = Math.max(1, colEnd.length);
-  return placed.map((p) => ({ ...p, cols }));
+    while (c < colEnd.length && colEnd[c] > it.s) c++;
+    colEnd[c] = it.e;
+    it.col = c;
+    cluster.push(it);
+    clusterEnd = Math.max(clusterEnd, it.e);
+  }
+  if (cluster.length) flush();
+  return result;
 }
 
 function dowClass(i: number): string {

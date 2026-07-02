@@ -17,6 +17,7 @@ import KakaoMap from "@/components/KakaoMap";
 import FallbackMap from "@/components/FallbackMap";
 import CalendarView from "@/components/CalendarView";
 import EventModal from "@/components/EventModal";
+import PlaceSearch from "@/components/PlaceSearch";
 
 export type Mode = "car" | "transit" | "walk";
 
@@ -58,6 +59,7 @@ const ENDPOINT: Record<Mode, string> = {
 };
 
 const STORE_KEY = "aremi.plan.v1";
+const ORIGIN_ID = "__origin__";
 
 function uid(): string {
   return typeof crypto !== "undefined" && crypto.randomUUID
@@ -84,6 +86,12 @@ export default function Home() {
   const [modeByStop, setModeByStop] = useState<Record<string, Mode>>({});
   const [mapDate, setMapDate] = useState("");
   const [modal, setModal] = useState<{ ev: Place; isNew: boolean } | null>(null);
+  const [startPlace, setStartPlace] = useState<{
+    name: string;
+    lat: number;
+    lng: number;
+  } | null>(null);
+  const [homeOpen, setHomeOpen] = useState(false);
 
   // 불러오기 (+ 옛 형식 마이그레이션)
   useEffect(() => {
@@ -108,6 +116,7 @@ export default function Home() {
           setEvents(flat);
         }
         setModeByStop(d.modeByStop ?? {});
+        setStartPlace(d.startPlace ?? null);
       }
     } catch {
       /* 무시 */
@@ -118,8 +127,11 @@ export default function Home() {
 
   useEffect(() => {
     if (!mounted) return;
-    localStorage.setItem(STORE_KEY, JSON.stringify({ events, modeByStop }));
-  }, [events, modeByStop, mounted]);
+    localStorage.setItem(
+      STORE_KEY,
+      JSON.stringify({ events, modeByStop, startPlace })
+    );
+  }, [events, modeByStop, startPlace, mounted]);
 
   // 오늘의 동선에 실제 이동시간을 반영한 시간표(출발 알림용). 백그라운드 계산.
   const [todaySched, setTodaySched] = useState<{
@@ -130,8 +142,20 @@ export default function Home() {
   useEffect(() => {
     if (!mounted) return;
     const today = todayStr();
-    const tRoute = optimizeRoute(eventsOnDate(events, today));
-    const hasAlarm = tRoute.some((e) => e.departAlarm != null);
+    const base = optimizeRoute(eventsOnDate(events, today));
+    const origin: Place | null = startPlace
+      ? {
+          id: ORIGIN_ID,
+          date: today,
+          title: "출발",
+          name: startPlace.name,
+          lat: startPlace.lat,
+          lng: startPlace.lng,
+          kind: "flexible",
+        }
+      : null;
+    const tRoute = origin ? [origin, ...base] : base;
+    const hasAlarm = base.some((e) => e.departAlarm != null);
     if (!hasAlarm || tRoute.length < 2) {
       setTodaySched(null);
       return;
@@ -158,7 +182,7 @@ export default function Home() {
       canceled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [events, modeByStop, mounted]);
+  }, [events, modeByStop, startPlace, mounted]);
 
   // 출발 알림: 직전 일정에서 이 일정까지 걸리는 시간을 반영해 '출발 시각'에 알림
   const firedRef = useRef<Set<string>>(new Set());
@@ -207,6 +231,23 @@ export default function Home() {
   );
   const route = useMemo(() => optimizeRoute(dayPlaces), [dayPlaces]);
 
+  // 출발지(집)를 넣으면 그 날 경로의 시작점이 되어 첫 일정도 출발/도착 시각이 계산된다.
+  const fullRoute = useMemo<Place[]>(() => {
+    if (route.length === 0 || !startPlace) return route;
+    return [
+      {
+        id: ORIGIN_ID,
+        date: mapDate,
+        title: "출발",
+        name: startPlace.name,
+        lat: startPlace.lat,
+        lng: startPlace.lng,
+        kind: "flexible",
+      },
+      ...route,
+    ];
+  }, [route, startPlace, mapDate]);
+
   const [info, setInfo] = useState<RouteInfo>({
     segments: [],
     legs: [],
@@ -219,14 +260,14 @@ export default function Home() {
     if (view !== "map") return;
     let canceled = false;
 
-    if (route.length === 0) {
+    if (fullRoute.length === 0) {
       setInfo({ segments: [], legs: [], dashed: false });
       return;
     }
 
-    const straightSegs: Segment[] = route.slice(1).map((dest, idx) => ({
+    const straightSegs: Segment[] = fullRoute.slice(1).map((dest, idx) => ({
       path: [
-        { lat: route[idx].lat, lng: route[idx].lng },
+        { lat: fullRoute[idx].lat, lng: fullRoute[idx].lng },
         { lat: dest.lat, lng: dest.lng },
       ],
       mode: modeOf(dest.id),
@@ -234,14 +275,16 @@ export default function Home() {
     setInfo((prev) => ({
       segments: straightSegs,
       legs:
-        prev.legs.length === route.length ? prev.legs : route.map(() => null),
+        prev.legs.length === fullRoute.length
+          ? prev.legs
+          : fullRoute.map(() => null),
       dashed: true,
     }));
 
     Promise.all(
-      route
+      fullRoute
         .slice(1)
-        .map((dest, idx) => fetchLeg(route[idx], dest, modeOf(dest.id)))
+        .map((dest, idx) => fetchLeg(fullRoute[idx], dest, modeOf(dest.id)))
     ).then((results) => {
       if (canceled) return;
       setInfo({
@@ -255,18 +298,18 @@ export default function Home() {
       canceled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [route, modeByStop, view]);
+  }, [fullRoute, modeByStop, view]);
 
   const totalMin = info.legs.reduce((s, l) => s + (l?.durationMin ?? 0), 0);
   const totalDist = info.legs.reduce((s, l) => s + (l?.distanceM ?? 0), 0);
 
   const schedule = useMemo(() => {
-    if (view !== "map" || route.length === 0) return null;
+    if (view !== "map" || fullRoute.length === 0) return null;
     const now = new Date();
     const nowMin = now.getHours() * 60 + now.getMinutes();
-    const travel = route.map((_, i) => info.legs[i]?.durationMin ?? null);
-    return buildSchedule(route, travel, nowMin);
-  }, [view, route, info.legs]);
+    const travel = fullRoute.map((_, i) => info.legs[i]?.durationMin ?? null);
+    return buildSchedule(fullRoute, travel, nowMin);
+  }, [view, fullRoute, info.legs]);
 
   // ── 이벤트 CRUD ──
   function openCreate(date: string, startTime?: string) {
@@ -315,6 +358,7 @@ export default function Home() {
 
   // ================= 동선(MAP) 화면 =================
   if (view === "map") {
+    const hasOrigin = fullRoute[0]?.id === ORIGIN_ID;
     return (
       <main className="route-screen">
         <div className="route-topbar">
@@ -328,13 +372,24 @@ export default function Home() {
               {totalDist > 0 && <> · {formatDistance(totalDist)}</>}
             </div>
           </div>
+          <button
+            className={`home-btn${startPlace ? " set" : ""}`}
+            onClick={() => setHomeOpen(true)}
+            title={startPlace ? `출발지: ${startPlace.name}` : "출발지 설정"}
+          >
+            🏠 {startPlace ? "출발지" : "설정"}
+          </button>
         </div>
 
         <div className="route-map">
           {kakaoReady ? (
-            <KakaoMap route={route} segments={info.segments} dashed={info.dashed} />
+            <KakaoMap
+              route={fullRoute}
+              segments={info.segments}
+              dashed={info.dashed}
+            />
           ) : (
-            <FallbackMap route={route} />
+            <FallbackMap route={fullRoute} />
           )}
         </div>
 
@@ -360,24 +415,37 @@ export default function Home() {
             </div>
           ) : mapMode === "diary" ? (
             <ol className="stops">
-              {route.map((p, i) => (
-                <li key={p.id} className="stop">
-                  <div className="stop-no">{i + 1}</div>
-                  <div className="stop-body">
-                    <div className="stop-name">{p.title || p.name}</div>
-                    <div className="ev-place">
-                      📍 {p.name}
-                      {p.kind === "anchor" && p.startTime
-                        ? ` · ${p.startTime}${p.endTime ? `~${p.endTime}` : ""}`
-                        : ""}
+              {fullRoute.map((p, i) => {
+                const isOrigin = p.id === ORIGIN_ID;
+                return (
+                  <li key={p.id} className="stop">
+                    <div className={`stop-no${isOrigin ? " origin" : ""}`}>
+                      {isOrigin ? "🏠" : hasOrigin ? i : i + 1}
                     </div>
-                    {p.note && <div className="diary-memo">📝 {p.note}</div>}
-                    <button className="photo-slot" disabled>
-                      ＋ 사진 (곧)
-                    </button>
-                  </div>
-                </li>
-              ))}
+                    <div className="stop-body">
+                      <div className="stop-name">
+                        {isOrigin ? "출발" : p.title || p.name}
+                      </div>
+                      <div className="ev-place">
+                        📍 {p.name}
+                        {!isOrigin && p.kind === "anchor" && p.startTime
+                          ? ` · ${p.startTime}${
+                              p.endTime ? `~${p.endTime}` : ""
+                            }`
+                          : ""}
+                      </div>
+                      {!isOrigin && p.note && (
+                        <div className="diary-memo">📝 {p.note}</div>
+                      )}
+                      {!isOrigin && (
+                        <button className="photo-slot" disabled>
+                          ＋ 사진 (곧)
+                        </button>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
             </ol>
           ) : (
             <>
@@ -393,18 +461,30 @@ export default function Home() {
                 </p>
               )}
               <ol className="stops">
-              {route.map((p, i) => {
+              {fullRoute.map((p, i) => {
                 const leg = info.legs[i];
                 const st = schedule?.stops[i];
                 const prev = schedule?.stops[i - 1];
+                const isOrigin = p.id === ORIGIN_ID;
                 return (
                   <li key={p.id} className="stop">
-                    <div className="stop-no">{i + 1}</div>
+                    <div className={`stop-no${isOrigin ? " origin" : ""}`}>
+                      {isOrigin ? "🏠" : hasOrigin ? i : i + 1}
+                    </div>
                     <div className="stop-body">
-                      <div className="stop-name">{p.title || p.name}</div>
+                      <div className="stop-name">
+                        {isOrigin ? "출발" : p.title || p.name}
+                      </div>
                       <div className="ev-place">📍 {p.name}</div>
 
-                      {st && (
+                      {st && isOrigin && (
+                        <div className="sched">
+                          <span className="sched-arr">
+                            출발 {minToHHMM(st.departMin)}
+                          </span>
+                        </div>
+                      )}
+                      {st && !isOrigin && (
                         <div className="sched">
                           {p.kind === "anchor" ? (
                             <span
@@ -482,16 +562,18 @@ export default function Home() {
                         </div>
                       )}
 
-                      <a
-                        className="route-link"
-                        href={`https://map.kakao.com/link/to/${encodeURIComponent(
-                          p.name
-                        )},${p.lat},${p.lng}`}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        길찾기
-                      </a>
+                      {!isOrigin && (
+                        <a
+                          className="route-link"
+                          href={`https://map.kakao.com/link/to/${encodeURIComponent(
+                            p.name
+                          )},${p.lat},${p.lng}`}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          길찾기
+                        </a>
+                      )}
                     </div>
                   </li>
                 );
@@ -508,6 +590,38 @@ export default function Home() {
             </>
           )}
         </div>
+
+        {homeOpen && (
+          <div className="modal-back" onClick={() => setHomeOpen(false)}>
+            <div className="modal" onClick={(e) => e.stopPropagation()}>
+              <div className="modal-head">
+                <h3>출발 위치 (집·회사 등)</h3>
+                <button className="modal-x" onClick={() => setHomeOpen(false)}>
+                  ✕
+                </button>
+              </div>
+              <p className="dim">
+                여기서 그날 첫 일정까지 걸리는 시간을 계산해, 첫 일정에도 출발
+                알림을 줄 수 있어요.
+              </p>
+              {startPlace && (
+                <div className="picked-place">
+                  📍 {startPlace.name}
+                  <button className="repick" onClick={() => setStartPlace(null)}>
+                    지우기
+                  </button>
+                </div>
+              )}
+              <PlaceSearch
+                kakaoReady={kakaoReady}
+                onAdd={(r) => {
+                  setStartPlace({ name: r.name, lat: r.lat, lng: r.lng });
+                  setHomeOpen(false);
+                }}
+              />
+            </div>
+          </div>
+        )}
       </main>
     );
   }

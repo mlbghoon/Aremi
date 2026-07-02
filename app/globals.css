@@ -454,6 +454,10 @@ body {
 .icon-back:active {
   background: var(--surface);
 }
+.route-topbar-info {
+  flex: 1;
+  min-width: 0;
+}
 .topbar-date {
   font-size: 15px;
   font-weight: 700;
@@ -461,6 +465,26 @@ body {
 .topbar-sum {
   font-size: 12px;
   color: var(--muted);
+}
+.home-btn {
+  flex: none;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--muted);
+  border-radius: 9px;
+  padding: 7px 11px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.home-btn.set {
+  color: var(--ink);
+  border-color: rgba(52, 211, 153, 0.5);
+}
+.stop-no.origin {
+  background: #16351f;
+  box-shadow: inset 0 0 0 1px rgba(52, 211, 153, 0.6);
+  font-size: 13px;
 }
 .route-map {
   flex: 0 0 40%;

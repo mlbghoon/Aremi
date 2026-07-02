@@ -205,8 +205,13 @@ export default function EventModal({
             <button
               className="btn-del"
               onClick={() => {
-                onDelete(ev.id);
-                onClose();
+                if (
+                  typeof window !== "undefined" &&
+                  window.confirm(`'${ev.title || ev.name}' 일정을 삭제할까요?`)
+                ) {
+                  onDelete(ev.id);
+                  onClose();
+                }
               }}
             >
               삭제
