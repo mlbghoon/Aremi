@@ -9,15 +9,25 @@ import {
   roughDriveMinutes,
   roughWalkMinutes,
 } from "@/lib/geo";
-import { formatKorean, todayStr, toDateStr } from "@/lib/date";
+import {
+  formatKorean,
+  todayStr,
+  toDateStr,
+  addDays,
+  onThisDay,
+  relativeLabel,
+} from "@/lib/date";
 import { eventsOnDate } from "@/lib/recurrence";
 import { buildSchedule, minToHHMM } from "@/lib/schedule";
+import { buildDayCard } from "@/lib/dayCard";
 import { useKakao } from "@/lib/useKakao";
 import KakaoMap from "@/components/KakaoMap";
 import FallbackMap from "@/components/FallbackMap";
 import CalendarView from "@/components/CalendarView";
 import EventModal from "@/components/EventModal";
 import PlaceSearch from "@/components/PlaceSearch";
+import FeedView from "@/components/FeedView";
+import PhotoStrip from "@/components/PhotoStrip";
 
 export type Mode = "car" | "transit" | "walk";
 
@@ -44,7 +54,7 @@ interface RouteInfo {
   dashed: boolean;
 }
 
-type View = "plan" | "map";
+type View = "plan" | "map" | "feed";
 
 const MODES: { id: Mode; icon: string; label: string }[] = [
   { id: "car", icon: "🚗", label: "자동차" },
@@ -60,6 +70,7 @@ const ENDPOINT: Record<Mode, string> = {
 
 const STORE_KEY = "aremi.plan.v1";
 const ORIGIN_ID = "__origin__";
+const MOODS = ["😀", "🙂", "😐", "😔", "😢", "🥳", "😴", "🥰"];
 
 function uid(): string {
   return typeof crypto !== "undefined" && crypto.randomUUID
@@ -92,6 +103,8 @@ export default function Home() {
   const [mapMode, setMapMode] = useState<"route" | "diary">("route");
   const [events, setEvents] = useState<Place[]>([]);
   const [modeByStop, setModeByStop] = useState<Record<string, Mode>>({});
+  const [journals, setJournals] = useState<Record<string, string>>({});
+  const [moods, setMoods] = useState<Record<string, string>>({});
   const [mapDate, setMapDate] = useState("");
   const [modal, setModal] = useState<{ ev: Place; isNew: boolean } | null>(null);
   type Loc = { name: string; lat: number; lng: number };
@@ -126,6 +139,8 @@ export default function Home() {
         setModeByStop(d.modeByStop ?? {});
         setStartPlace(d.startPlace ?? null);
         setStartByDate(d.startByDate ?? {});
+        setJournals(d.journals ?? {});
+        setMoods(d.moods ?? {});
       }
     } catch {
       /* 무시 */
@@ -138,9 +153,16 @@ export default function Home() {
     if (!mounted) return;
     localStorage.setItem(
       STORE_KEY,
-      JSON.stringify({ events, modeByStop, startPlace, startByDate })
+      JSON.stringify({
+        events,
+        modeByStop,
+        startPlace,
+        startByDate,
+        journals,
+        moods,
+      })
     );
-  }, [events, modeByStop, startPlace, startByDate, mounted]);
+  }, [events, modeByStop, startPlace, startByDate, journals, moods, mounted]);
 
   // 그 날짜의 출발지: 날짜별 지정 > 기본(매일) > 없음
   const originFor = (date: string): Loc | null =>
@@ -328,6 +350,18 @@ export default function Home() {
     return buildSchedule(fullRoute, travel, nowMin);
   }, [view, fullRoute, info.legs]);
 
+  // 홈 회상 카드: 작년/과거 같은 날 > 1주 전 (기록 있는 날 중)
+  const recallDay = useMemo(() => {
+    const t = todayStr();
+    const past = new Set<string>();
+    for (const e of events) if (e.date < t) past.add(e.date);
+    for (const d of Object.keys(journals))
+      if (journals[d]?.trim() && d < t) past.add(d);
+    for (const d of past) if (onThisDay(d, t)) return d;
+    const wk = addDays(t, -7);
+    return past.has(wk) ? wk : null;
+  }, [events, journals]);
+
   // ── 이벤트 CRUD ──
   function openCreate(date: string, startTime?: string) {
     const ev: Place = startTime
@@ -414,6 +448,52 @@ export default function Home() {
     else setStartPlace(loc);
     setHomeOpen(false);
   }
+  function setJournal(date: string, text: string) {
+    setJournals((prev) => ({ ...prev, [date]: text }));
+  }
+  function setMood(date: string, emoji: string) {
+    setMoods((prev) => {
+      const next = { ...prev };
+      if (next[date] === emoji) delete next[date];
+      else next[date] = emoji;
+      return next;
+    });
+  }
+  function toggleDone(id: string) {
+    setEvents((prev) =>
+      prev.map((e) => (e.id === id ? { ...e, done: !e.done } : e))
+    );
+  }
+  function openDiary(date: string) {
+    setMapDate(date);
+    setMapMode("diary");
+    setView("map");
+  }
+  async function shareDay() {
+    const blob = await buildDayCard({
+      date: mapDate,
+      events: route,
+      journal: journals[mapDate],
+      mood: moods[mapDate],
+    });
+    if (!blob) return;
+    const file = new File([blob], "aremi-day.png", { type: "image/png" });
+    const nav = navigator as any;
+    if (nav.canShare && nav.canShare({ files: [file] })) {
+      try {
+        await nav.share({ files: [file], title: formatKorean(mapDate) });
+        return;
+      } catch {
+        return;
+      }
+    }
+    const u = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = u;
+    link.download = "aremi-day.png";
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(u), 1000);
+  }
   function clearHome() {
     if (homeScope === "day")
       setStartByDate((prev) => {
@@ -489,39 +569,76 @@ export default function Home() {
               <p>이 날은 장소가 있는 일정이 없어요.</p>
             </div>
           ) : mapMode === "diary" ? (
-            <ol className="stops">
-              {fullRoute.map((p, i) => {
-                const isOrigin = p.id === ORIGIN_ID;
-                return (
-                  <li key={p.id} className="stop">
-                    <div className={`stop-no${isOrigin ? " origin" : ""}`}>
-                      {isOrigin ? "🏠" : hasOrigin ? i : i + 1}
-                    </div>
-                    <div className="stop-body">
-                      <div className="stop-name">
-                        {isOrigin ? "출발" : p.title || p.name}
+            <>
+              <div className="mood-row">
+                {MOODS.map((m) => (
+                  <button
+                    key={m}
+                    className={moods[mapDate] === m ? "on" : ""}
+                    onClick={() => setMood(mapDate, m)}
+                    aria-label={`기분 ${m}`}
+                  >
+                    {m}
+                  </button>
+                ))}
+              </div>
+              <textarea
+                className="day-journal"
+                value={journals[mapDate] ?? ""}
+                onChange={(e) => setJournal(mapDate, e.target.value)}
+                placeholder="오늘 하루 어땠나요? (한 줄 기록)"
+                rows={2}
+              />
+              {route.length > 0 && (
+                <button className="day-share-btn" onClick={shareDay}>
+                  🖼 하루 공유 카드 만들기
+                </button>
+              )}
+              <ol className="stops">
+                {fullRoute.map((p, i) => {
+                  const isOrigin = p.id === ORIGIN_ID;
+                  return (
+                    <li
+                      key={p.id}
+                      className={`stop${!isOrigin && p.done ? " done" : ""}`}
+                    >
+                      <div className={`stop-no${isOrigin ? " origin" : ""}`}>
+                        {isOrigin ? "🏠" : hasOrigin ? i : i + 1}
                       </div>
-                      <div className="ev-place">
-                        📍 {p.name}
-                        {!isOrigin && p.kind === "anchor" && p.startTime
-                          ? ` · ${p.startTime}${
-                              p.endTime ? `~${p.endTime}` : ""
-                            }`
-                          : ""}
+                      <div className="stop-body">
+                        <div className="stop-name">
+                          {isOrigin ? "출발" : p.title || p.name}
+                        </div>
+                        <div className="ev-place">
+                          📍 {p.name}
+                          {!isOrigin && p.kind === "anchor" && p.startTime
+                            ? ` · ${p.startTime}${
+                                p.endTime ? `~${p.endTime}` : ""
+                              }`
+                            : ""}
+                        </div>
+                        {!isOrigin && p.note && (
+                          <div className="diary-memo">📝 {p.note}</div>
+                        )}
+                        {!isOrigin && (
+                          <>
+                            <div className="diary-actions">
+                              <button
+                                className={`done-check${p.done ? " on" : ""}`}
+                                onClick={() => toggleDone(p.id)}
+                              >
+                                {p.done ? "✓ 다녀옴" : "다녀옴"}
+                              </button>
+                            </div>
+                            <PhotoStrip eventId={p.id} date={mapDate} />
+                          </>
+                        )}
                       </div>
-                      {!isOrigin && p.note && (
-                        <div className="diary-memo">📝 {p.note}</div>
-                      )}
-                      {!isOrigin && (
-                        <button className="photo-slot" disabled>
-                          ＋ 사진 (곧)
-                        </button>
-                      )}
-                    </div>
-                  </li>
-                );
-              })}
-            </ol>
+                    </li>
+                  );
+                })}
+              </ol>
+            </>
           ) : (
             <>
               {schedule && schedule.worstLateMin > 0 && (
@@ -761,13 +878,42 @@ export default function Home() {
     );
   }
 
+  // ================= 돌아보기(FEED) 화면 =================
+  if (view === "feed") {
+    return (
+      <FeedView
+        events={events}
+        journals={journals}
+        moods={moods}
+        onOpen={openDiary}
+        onBack={() => setView("plan")}
+      />
+    );
+  }
+
   // ================= 달력(PLAN) 화면 =================
   return (
     <main className="cal-screen">
-      <header className="app-bar">
-        <h1>Aremi Project Demo (동선)</h1>
-        <span className="app-bar-sub">일정 + 지도 · 날짜를 골라 계획하세요</span>
+      <header className="app-bar row">
+        <div className="app-bar-title">
+          <h1>Aremi (동선)</h1>
+          <span className="app-bar-sub">일정 + 지도</span>
+        </div>
+        <button className="feed-btn" onClick={() => setView("feed")}>
+          🕘 돌아보기
+        </button>
       </header>
+
+      {recallDay && (
+        <button className="recall-home" onClick={() => openDiary(recallDay)}>
+          <span className="recall-home-badge">
+            🎈 {onThisDay(recallDay, todayStr()) ?? relativeLabel(recallDay, todayStr())}
+          </span>
+          <span className="recall-home-text">
+            {formatKorean(recallDay)}, 그날을 돌아볼까요?
+          </span>
+        </button>
+      )}
 
       <CalendarView
         events={events}

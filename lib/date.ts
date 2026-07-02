@@ -85,6 +85,35 @@ export function monthMatrix(dateStr: string): Cell[] {
 
 export const WEEKDAY_LABELS = WEEKDAYS;
 
+/** a와 b(YYYY-MM-DD) 사이 일수 차이 (a - b) */
+export function daysBetween(a: string, b: string): number {
+  const ms = parseDate(a).getTime() - parseDate(b).getTime();
+  return Math.round(ms / 86400000);
+}
+
+/** "오늘 / 어제 / N일 전 / M/D" 상대 표기 (기준일 today) */
+export function relativeLabel(dateStr: string, today: string): string {
+  const d = daysBetween(today, dateStr); // 과거면 양수
+  if (d === 0) return "오늘";
+  if (d === 1) return "어제";
+  if (d > 1 && d < 7) return `${d}일 전`;
+  if (d === 7) return "1주 전";
+  if (d >= 14 && d < 60 && d % 7 === 0) return `${d / 7}주 전`;
+  const [, m, day] = dateStr.split("-").map(Number);
+  return `${m}/${day}`;
+}
+
+/** 같은 월·일인데 연도가 과거면 "작년 오늘 / N년 전 오늘" */
+export function onThisDay(dateStr: string, today: string): string | null {
+  const [y1, m1, d1] = dateStr.split("-").map(Number);
+  const [y0, m0, d0] = today.split("-").map(Number);
+  if (m1 === m0 && d1 === d0 && y1 < y0) {
+    const diff = y0 - y1;
+    return diff === 1 ? "작년 오늘" : `${diff}년 전 오늘`;
+  }
+  return null;
+}
+
 // ── 시간대 격자(주/일 뷰) ──
 export const GRID_START_HOUR = 6; // 06:00부터
 export const GRID_END_HOUR = 24; // 24:00까지

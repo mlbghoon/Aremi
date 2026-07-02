@@ -32,6 +32,8 @@ export interface Place {
   departAlarm?: number;
   /** 수동 방문 순서. 설정되면 자동 최적화 대신 이 순서를 쓴다. */
   order?: number;
+  /** 다녀옴(방문 완료) 체크 — 다이어리(기록)용 */
+  done?: boolean;
 }
 
 export interface Leg {

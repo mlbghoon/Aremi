@@ -127,15 +127,37 @@ export default function CalendarView({
             onPickDay={() => {}}
           />
           <div className="day-actions">
-            <button className="view-map-btn" onClick={() => onViewRoute(cursor)}>
-              🗺️ 동선 보기
-            </button>
-            <button
-              className="view-map-btn ghost"
-              onClick={() => onViewDiary(cursor)}
-            >
-              📖 이 날 기록
-            </button>
+            {cursor < today ? (
+              <>
+                <button
+                  className="view-map-btn"
+                  onClick={() => onViewDiary(cursor)}
+                >
+                  📖 이 날 기록
+                </button>
+                <button
+                  className="view-map-btn ghost"
+                  onClick={() => onViewRoute(cursor)}
+                >
+                  🗺️ 동선
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  className="view-map-btn"
+                  onClick={() => onViewRoute(cursor)}
+                >
+                  🗺️ 동선 보기
+                </button>
+                <button
+                  className="view-map-btn ghost"
+                  onClick={() => onViewDiary(cursor)}
+                >
+                  📖 기록
+                </button>
+              </>
+            )}
           </div>
         </>
       )}
