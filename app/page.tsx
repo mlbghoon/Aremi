@@ -67,6 +67,14 @@ function uid(): string {
     : `ev-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
 }
 
+/** 수동 순서(order)가 있으면 그대로, 없으면 자동 최적화 */
+function orderRoute(places: Place[]): Place[] {
+  if (places.some((p) => p.order != null)) {
+    return [...places].sort((a, b) => (a.order ?? 1e9) - (b.order ?? 1e9));
+  }
+  return optimizeRoute(places);
+}
+
 function plusHour(hhmm: string): string {
   const [h, m] = hhmm.split(":").map(Number);
   const t = Math.min(24 * 60 - 1, h * 60 + m + 60);
@@ -86,12 +94,12 @@ export default function Home() {
   const [modeByStop, setModeByStop] = useState<Record<string, Mode>>({});
   const [mapDate, setMapDate] = useState("");
   const [modal, setModal] = useState<{ ev: Place; isNew: boolean } | null>(null);
-  const [startPlace, setStartPlace] = useState<{
-    name: string;
-    lat: number;
-    lng: number;
-  } | null>(null);
+  type Loc = { name: string; lat: number; lng: number };
+  const [startPlace, setStartPlace] = useState<Loc | null>(null); // 기본(매일) 출발지
+  const [startByDate, setStartByDate] = useState<Record<string, Loc>>({}); // 날짜별 출발지
   const [homeOpen, setHomeOpen] = useState(false);
+  const [homeScope, setHomeScope] = useState<"day" | "default">("default");
+  const dragIdRef = useRef<string | null>(null);
 
   // 불러오기 (+ 옛 형식 마이그레이션)
   useEffect(() => {
@@ -117,6 +125,7 @@ export default function Home() {
         }
         setModeByStop(d.modeByStop ?? {});
         setStartPlace(d.startPlace ?? null);
+        setStartByDate(d.startByDate ?? {});
       }
     } catch {
       /* 무시 */
@@ -129,9 +138,13 @@ export default function Home() {
     if (!mounted) return;
     localStorage.setItem(
       STORE_KEY,
-      JSON.stringify({ events, modeByStop, startPlace })
+      JSON.stringify({ events, modeByStop, startPlace, startByDate })
     );
-  }, [events, modeByStop, startPlace, mounted]);
+  }, [events, modeByStop, startPlace, startByDate, mounted]);
+
+  // 그 날짜의 출발지: 날짜별 지정 > 기본(매일) > 없음
+  const originFor = (date: string): Loc | null =>
+    startByDate[date] ?? startPlace ?? null;
 
   // 오늘의 동선에 실제 이동시간을 반영한 시간표(출발 알림용). 백그라운드 계산.
   const [todaySched, setTodaySched] = useState<{
@@ -142,15 +155,16 @@ export default function Home() {
   useEffect(() => {
     if (!mounted) return;
     const today = todayStr();
-    const base = optimizeRoute(eventsOnDate(events, today));
-    const origin: Place | null = startPlace
+    const base = orderRoute(eventsOnDate(events, today));
+    const o = originFor(today);
+    const origin: Place | null = o
       ? {
           id: ORIGIN_ID,
           date: today,
           title: "출발",
-          name: startPlace.name,
-          lat: startPlace.lat,
-          lng: startPlace.lng,
+          name: o.name,
+          lat: o.lat,
+          lng: o.lng,
           kind: "flexible",
         }
       : null;
@@ -182,7 +196,7 @@ export default function Home() {
       canceled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [events, modeByStop, startPlace, mounted]);
+  }, [events, modeByStop, startPlace, startByDate, mounted]);
 
   // 출발 알림: 직전 일정에서 이 일정까지 걸리는 시간을 반영해 '출발 시각'에 알림
   const firedRef = useRef<Set<string>>(new Set());
@@ -229,24 +243,27 @@ export default function Home() {
     () => eventsOnDate(events, mapDate),
     [events, mapDate]
   );
-  const route = useMemo(() => optimizeRoute(dayPlaces), [dayPlaces]);
+  const route = useMemo(() => orderRoute(dayPlaces), [dayPlaces]);
+  const manualOrder = dayPlaces.some((p) => p.order != null);
 
   // 출발지(집)를 넣으면 그 날 경로의 시작점이 되어 첫 일정도 출발/도착 시각이 계산된다.
+  const origin = originFor(mapDate);
   const fullRoute = useMemo<Place[]>(() => {
-    if (route.length === 0 || !startPlace) return route;
+    if (route.length === 0 || !origin) return route;
     return [
       {
         id: ORIGIN_ID,
         date: mapDate,
         title: "출발",
-        name: startPlace.name,
-        lat: startPlace.lat,
-        lng: startPlace.lng,
+        name: origin.name,
+        lat: origin.lat,
+        lng: origin.lng,
         kind: "flexible",
       },
       ...route,
     ];
-  }, [route, startPlace, mapDate]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [route, origin?.lat, origin?.lng, mapDate]);
 
   const [info, setInfo] = useState<RouteInfo>({
     segments: [],
@@ -352,6 +369,61 @@ export default function Home() {
     setModeByStop((prev) => ({ ...prev, [id]: m }));
   }
 
+  // 드래그로 순서 바꾸기 → 그 날 이벤트에 수동 order 부여
+  function reorderDay(date: string, draggedId: string, targetId: string) {
+    if (draggedId === targetId) return;
+    const ordered = [...route];
+    const from = ordered.findIndex((e) => e.id === draggedId);
+    const to = ordered.findIndex((e) => e.id === targetId);
+    if (from < 0 || to < 0) return;
+    const [moved] = ordered.splice(from, 1);
+    ordered.splice(to, 0, moved);
+    const orderById = new Map(ordered.map((e, i) => [e.id, i]));
+    setEvents((prev) =>
+      prev.map((e) =>
+        e.date === date && orderById.has(e.id)
+          ? { ...e, order: orderById.get(e.id) }
+          : e
+      )
+    );
+  }
+  function clearOrder(date: string) {
+    setEvents((prev) =>
+      prev.map((e) => (e.date === date ? { ...e, order: undefined } : e))
+    );
+  }
+  // ▲▼ 로 한 칸 이동 (터치에서도 동작)
+  function moveStop(date: string, id: string, dir: -1 | 1) {
+    const ordered = [...route];
+    const from = ordered.findIndex((e) => e.id === id);
+    const to = from + dir;
+    if (from < 0 || to < 0 || to >= ordered.length) return;
+    [ordered[from], ordered[to]] = [ordered[to], ordered[from]];
+    const orderById = new Map(ordered.map((e, i) => [e.id, i]));
+    setEvents((prev) =>
+      prev.map((e) =>
+        e.date === date && orderById.has(e.id)
+          ? { ...e, order: orderById.get(e.id) }
+          : e
+      )
+    );
+  }
+  function setHome(loc: Loc) {
+    if (homeScope === "day")
+      setStartByDate((prev) => ({ ...prev, [mapDate]: loc }));
+    else setStartPlace(loc);
+    setHomeOpen(false);
+  }
+  function clearHome() {
+    if (homeScope === "day")
+      setStartByDate((prev) => {
+        const next = { ...prev };
+        delete next[mapDate];
+        return next;
+      });
+    else setStartPlace(null);
+  }
+
   if (!mounted) {
     return <main className="cal-screen" />;
   }
@@ -373,11 +445,14 @@ export default function Home() {
             </div>
           </div>
           <button
-            className={`home-btn${startPlace ? " set" : ""}`}
-            onClick={() => setHomeOpen(true)}
-            title={startPlace ? `출발지: ${startPlace.name}` : "출발지 설정"}
+            className={`home-btn${origin ? " set" : ""}`}
+            onClick={() => {
+              setHomeScope(startByDate[mapDate] ? "day" : "default");
+              setHomeOpen(true);
+            }}
+            title={origin ? `출발지: ${origin.name}` : "출발지 설정"}
           >
-            🏠 {startPlace ? "출발지" : "설정"}
+            🏠 {origin ? "출발지" : "설정"}
           </button>
         </div>
 
@@ -460,14 +535,43 @@ export default function Home() {
                   고정 일정이 없어 ‘지금 출발’ 기준으로 시각을 계산했어요.
                 </p>
               )}
+              <div className="order-note">
+                {manualOrder ? (
+                  <>
+                    <span>순서 직접 정함</span>
+                    <button onClick={() => clearOrder(mapDate)}>
+                      자동 순서로
+                    </button>
+                  </>
+                ) : (
+                  <span className="dim">끌어서 순서를 바꿀 수 있어요</span>
+                )}
+              </div>
               <ol className="stops">
               {fullRoute.map((p, i) => {
                 const leg = info.legs[i];
                 const st = schedule?.stops[i];
                 const prev = schedule?.stops[i - 1];
                 const isOrigin = p.id === ORIGIN_ID;
+                const evIdx = isOrigin ? -1 : hasOrigin ? i - 1 : i;
                 return (
-                  <li key={p.id} className="stop">
+                  <li
+                    key={p.id}
+                    className={`stop${isOrigin ? "" : " draggable"}`}
+                    draggable={!isOrigin}
+                    onDragStart={() => {
+                      dragIdRef.current = p.id;
+                    }}
+                    onDragOver={(e) => {
+                      if (!isOrigin) e.preventDefault();
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      const src = dragIdRef.current;
+                      dragIdRef.current = null;
+                      if (!isOrigin && src) reorderDay(mapDate, src, p.id);
+                    }}
+                  >
                     <div className={`stop-no${isOrigin ? " origin" : ""}`}>
                       {isOrigin ? "🏠" : hasOrigin ? i : i + 1}
                     </div>
@@ -575,6 +679,24 @@ export default function Home() {
                         </a>
                       )}
                     </div>
+                    {!isOrigin && (
+                      <div className="reorder-btns">
+                        <button
+                          onClick={() => moveStop(mapDate, p.id, -1)}
+                          disabled={evIdx <= 0}
+                          aria-label="위로"
+                        >
+                          ▲
+                        </button>
+                        <button
+                          onClick={() => moveStop(mapDate, p.id, 1)}
+                          disabled={evIdx >= route.length - 1}
+                          aria-label="아래로"
+                        >
+                          ▼
+                        </button>
+                      </div>
+                    )}
                   </li>
                 );
               })}
@@ -601,23 +723,36 @@ export default function Home() {
                 </button>
               </div>
               <p className="dim">
-                여기서 그날 첫 일정까지 걸리는 시간을 계산해, 첫 일정에도 출발
-                알림을 줄 수 있어요.
+                그날 첫 일정까지 걸리는 시간을 계산해 출발 알림을 줘요.
               </p>
-              {startPlace && (
+              <div className="pillrow">
+                <button
+                  className={homeScope === "default" ? "on" : ""}
+                  onClick={() => setHomeScope("default")}
+                >
+                  매일(기본)
+                </button>
+                <button
+                  className={homeScope === "day" ? "on" : ""}
+                  onClick={() => setHomeScope("day")}
+                >
+                  이 날만 · {formatKorean(mapDate)}
+                </button>
+              </div>
+              {(homeScope === "day" ? startByDate[mapDate] : startPlace) && (
                 <div className="picked-place">
-                  📍 {startPlace.name}
-                  <button className="repick" onClick={() => setStartPlace(null)}>
+                  📍{" "}
+                  {(homeScope === "day" ? startByDate[mapDate] : startPlace)!.name}
+                  <button className="repick" onClick={clearHome}>
                     지우기
                   </button>
                 </div>
               )}
               <PlaceSearch
                 kakaoReady={kakaoReady}
-                onAdd={(r) => {
-                  setStartPlace({ name: r.name, lat: r.lat, lng: r.lng });
-                  setHomeOpen(false);
-                }}
+                onAdd={(r) =>
+                  setHome({ name: r.name, lat: r.lat, lng: r.lng })
+                }
               />
             </div>
           </div>

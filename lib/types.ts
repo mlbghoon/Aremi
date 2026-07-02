@@ -30,6 +30,8 @@ export interface Place {
    * 0 = 정확히 출발 시각, undefined = 알림 없음. (직전 일정이 있는 anchor에만 의미)
    */
   departAlarm?: number;
+  /** 수동 방문 순서. 설정되면 자동 최적화 대신 이 순서를 쓴다. */
+  order?: number;
 }
 
 export interface Leg {
