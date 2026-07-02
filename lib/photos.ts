@@ -10,6 +10,7 @@ export interface Annotation {
   x: number;
   y: number;
   size?: number; // 기본 1 (배율)
+  color?: string; // 텍스트 색 (기본 흰색)
 }
 
 export interface PhotoMeta {
@@ -34,6 +35,22 @@ export interface PhotoStore {
   setOrder(id: string, order: number): Promise<void>;
   /** 사진 삭제 */
   remove(id: string): Promise<void>;
+  /** 백업: 전체 사진(dataURL 포함) */
+  exportAll(): Promise<ExportedPhoto[]>;
+  /** 복원: 백업된 사진 쓰기 */
+  importAll(items: ExportedPhoto[]): Promise<void>;
+}
+
+export interface ExportedPhoto extends PhotoMeta {
+  dataUrl: string;
+}
+
+function blobToDataUrl(b: Blob): Promise<string> {
+  return new Promise((res) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result as string);
+    r.readAsDataURL(b);
+  });
 }
 
 // ─────────────────────────── IndexedDB 구현 (현재) ───────────────────────────
@@ -163,6 +180,36 @@ class IndexedDbPhotoStore implements PhotoStore {
       r.onsuccess = () => resolve();
       r.onerror = () => reject(r.error);
     });
+  }
+
+  async exportAll(): Promise<ExportedPhoto[]> {
+    const db = await openDB();
+    const records = await new Promise<PhotoRecord[]>((resolve, reject) => {
+      const r = store(db, "readonly").getAll();
+      r.onsuccess = () => resolve(r.result as PhotoRecord[]);
+      r.onerror = () => reject(r.error);
+    });
+    return Promise.all(
+      records.map(async ({ blob, ...m }) => ({
+        ...m,
+        annotations: m.annotations ?? [],
+        order: m.order ?? m.createdAt,
+        dataUrl: await blobToDataUrl(blob),
+      }))
+    );
+  }
+
+  async importAll(items: ExportedPhoto[]): Promise<void> {
+    const db = await openDB();
+    for (const it of items) {
+      const { dataUrl, ...meta } = it;
+      const blob = await (await fetch(dataUrl)).blob();
+      await new Promise<void>((resolve, reject) => {
+        const r = store(db, "readwrite").put({ ...meta, blob } as PhotoRecord);
+        r.onsuccess = () => resolve();
+        r.onerror = () => reject(r.error);
+      });
+    }
   }
 }
 

@@ -69,7 +69,7 @@ export default function EventModal({
         </label>
 
         <div className="field">
-          <span>장소</span>
+          <span>장소 (선택)</span>
           {hasPlace ? (
             <div className="picked-place">
               📍 {ev.name}
@@ -81,7 +81,12 @@ export default function EventModal({
               </button>
             </div>
           ) : (
-            <PlaceSearch kakaoReady={kakaoReady} onAdd={pickPlace} />
+            <>
+              <PlaceSearch kakaoReady={kakaoReady} onAdd={pickPlace} />
+              <small className="dim">
+                장소 없이도 저장돼요 (약 먹기·집안일 등). 장소가 있으면 동선에 들어갑니다.
+              </small>
+            </>
           )}
         </div>
 
@@ -223,7 +228,7 @@ export default function EventModal({
           </button>
           <button
             className="btn-save"
-            disabled={!hasPlace}
+            disabled={!hasPlace && !ev.title.trim()}
             onClick={() => {
               onSave(ev);
               onClose();

@@ -105,6 +105,7 @@ export default function PhotoStrip({
                       left: `${a.x * 100}%`,
                       top: `${a.y * 100}%`,
                       fontSize: `${(a.kind === "sticker" ? 30 : 13) * (a.size ?? 1)}px`,
+                      ...(a.kind === "text" ? { color: a.color ?? "#fff" } : {}),
                     }}
                   >
                     {a.value}

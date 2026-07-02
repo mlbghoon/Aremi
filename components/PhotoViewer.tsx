@@ -10,6 +10,7 @@ export interface ViewerPhoto {
 }
 
 const EMOJIS = ["❤️", "😍", "👍", "🎉", "🔥", "✨", "🥰", "😂", "📍", "🌸", "⭐", "☕"];
+const COLORS = ["#ffffff", "#111111", "#7c6cff", "#ff6b6b", "#fbbf24", "#34d399", "#5b8cff"];
 
 function aid() {
   return typeof crypto !== "undefined" && crypto.randomUUID
@@ -39,6 +40,8 @@ export default function PhotoViewer({
   const [editing, setEditing] = useState(false);
   const [annos, setAnnos] = useState<Annotation[]>([]);
   const [sel, setSel] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  const [color, setColor] = useState("#ffffff");
   const frameRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<string | null>(null);
   // 폰 프레임(.device) 위에 통째로 띄운다 (지도/시트를 덮도록)
@@ -63,12 +66,13 @@ export default function PhotoViewer({
     onAnnotate(cur.meta.id, next);
   }
   function addText() {
-    const v = window.prompt("사진에 쓸 메모");
-    if (!v?.trim()) return;
+    const v = draft.trim();
+    if (!v) return;
     persist([
       ...annos,
-      { id: aid(), kind: "text", value: v.trim(), x: 0.5, y: 0.5, size: 1 },
+      { id: aid(), kind: "text", value: v, x: 0.5, y: 0.5, size: 1, color },
     ]);
+    setDraft("");
   }
   function addSticker(e: string) {
     persist([
@@ -151,7 +155,7 @@ export default function PhotoViewer({
         ctx.lineWidth = Math.max(2, W * 0.008);
         ctx.strokeStyle = "rgba(0,0,0,.85)";
         ctx.strokeText(a.value, x, y);
-        ctx.fillStyle = "#fff";
+        ctx.fillStyle = a.color ?? "#fff";
         ctx.fillText(a.value, x, y);
       }
     }
@@ -227,6 +231,7 @@ export default function PhotoViewer({
                 className={a.kind === "sticker" ? "anno-sticker" : "anno-text"}
                 style={{
                   fontSize: `${(a.kind === "sticker" ? 46 : 22) * (a.size ?? 1)}px`,
+                  ...(a.kind === "text" ? { color: a.color ?? "#fff" } : {}),
                 }}
               >
                 {a.value}
@@ -263,9 +268,30 @@ export default function PhotoViewer({
 
       {editing ? (
         <div className="viewer-edit">
-          <button className="add-text-btn" onClick={addText}>
-            ＋ 텍스트
-          </button>
+          <div className="text-composer">
+            <input
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              placeholder="사진에 쓸 텍스트"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") addText();
+              }}
+            />
+            <button className="add-text-btn" onClick={addText}>
+              추가
+            </button>
+          </div>
+          <div className="color-swatches">
+            {COLORS.map((c) => (
+              <button
+                key={c}
+                className={color === c ? "on" : ""}
+                style={{ background: c }}
+                onClick={() => setColor(c)}
+                aria-label={`색 ${c}`}
+              />
+            ))}
+          </div>
           <div className="emoji-palette">
             {EMOJIS.map((e) => (
               <button key={e} onClick={() => addSticker(e)}>

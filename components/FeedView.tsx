@@ -12,27 +12,42 @@ import {
   monthTitle,
 } from "@/lib/date";
 import { photoStore } from "@/lib/photos";
+import { eventsOnDate } from "@/lib/recurrence";
 import MemoryMap, { Pin } from "@/components/MemoryMap";
 
 interface Props {
   events: Place[];
   journals: Record<string, string>;
   moods: Record<string, string>;
+  dones: Record<string, boolean>;
   onOpen: (date: string) => void;
   onBack: () => void;
+  onExport: () => void;
+  onImport: (file: File) => void;
 }
+
+const SCAN_DAYS = 400;
 
 export default function FeedView({
   events,
   journals,
   moods,
+  dones,
   onOpen,
   onBack,
+  onExport,
+  onImport,
 }: Props) {
   const today = todayStr();
+  const importRef = useRef<HTMLInputElement>(null);
 
+  // 반복 일정도 반영 (eventsOnDate)
+  const dayEvents = (d: string) =>
+    eventsOnDate(events, d).sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
   const hasContent = (d: string) =>
-    events.some((e) => e.date === d) || !!journals[d]?.trim() || !!moods[d];
+    eventsOnDate(events, d).length > 0 ||
+    !!journals[d]?.trim() ||
+    !!moods[d];
 
   // 연속 기록(스트릭): 오늘(없으면 어제)부터 거슬러 세기
   const streak = useMemo(() => {
@@ -51,37 +66,60 @@ export default function FeedView({
   const [rangeFrom, setRangeFrom] = useState("");
   const [rangeTo, setRangeTo] = useState("");
 
-  // 추억 지도 핀: 장소가 있는 과거 일정
-  const pins = useMemo<Pin[]>(
-    () =>
-      events
-        .filter((e) => e.date <= today && (e.lat !== 0 || e.lng !== 0))
-        .map((e) => ({
+  // 추억 지도 핀: 장소 있는 과거 일정 (반복 포함)
+  const occurrences = useMemo<Pin[]>(() => {
+    const out: Pin[] = [];
+    for (let i = 0; i <= SCAN_DAYS; i++) {
+      const d = addDays(today, -i);
+      for (const e of eventsOnDate(events, d)) {
+        if (e.lat === 0 && e.lng === 0) continue;
+        out.push({
           id: e.id,
           name: e.title || e.name,
           lat: e.lat,
           lng: e.lng,
-          date: e.date,
-          done: e.done,
-        })),
-    [events, today]
-  );
+          date: d,
+          done: !!dones[`${e.id}|${d}`],
+        });
+      }
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [events, dones, today]);
 
-  // 날짜 범위 필터 적용
+  // 날짜 범위 필터 + 같은 위치는 합치기(최근 날짜 대표)
   const shownPins = useMemo(() => {
     const to = rangeTo || today;
-    return pins.filter(
+    const filtered = occurrences.filter(
       (p) => (!rangeFrom || p.date >= rangeFrom) && p.date <= to
     );
-  }, [pins, rangeFrom, rangeTo, today]);
+    const byLoc = new Map<string, Pin>();
+    for (const p of filtered) {
+      const k = `${p.lat.toFixed(4)},${p.lng.toFixed(4)}`;
+      const ex = byLoc.get(k);
+      if (!ex) byLoc.set(k, p);
+      else
+        byLoc.set(k, {
+          ...(p.date > ex.date ? p : ex),
+          done: p.done || ex.done,
+        });
+    }
+    return [...byLoc.values()];
+  }, [occurrences, rangeFrom, rangeTo, today]);
 
   const days = useMemo(() => {
     const set = new Set<string>();
+    for (let i = 0; i <= SCAN_DAYS; i++) {
+      const d = addDays(today, -i);
+      if (hasContent(d)) set.add(d);
+    }
+    // 스캔 창보다 오래된 명시적 일정/일기도 포함
     for (const e of events) if (e.date && e.date <= today) set.add(e.date);
     for (const [d, txt] of Object.entries(journals))
       if (txt?.trim() && d <= today) set.add(d);
     return [...set].sort().reverse(); // 최신순
-  }, [events, journals, today]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [events, journals, moods, today]);
 
   // 각 날짜의 대표 사진(그날 첫 사진)을 로드
   const [covers, setCovers] = useState<Record<string, string>>({});
@@ -92,7 +130,7 @@ export default function FeedView({
     (async () => {
       const map: Record<string, string> = {};
       for (const date of days) {
-        const evs = events.filter((e) => e.date === date);
+        const evs = eventsOnDate(events, date);
         for (const e of evs) {
           const metas = await photoStore.list(e.id);
           if (metas.length) {
@@ -121,10 +159,9 @@ export default function FeedView({
   useEffect(() => () => coverUrlsRef.current.forEach((u) => URL.revokeObjectURL(u)), []);
 
   const dayCard = (date: string) => {
-    const evs = events
-      .filter((e) => e.date === date)
-      .sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
-    const doneCount = evs.filter((e) => e.done).length;
+    const evs = dayEvents(date);
+    const isDone = (e: Place) => !!dones[`${e.id}|${date}`];
+    const doneCount = evs.filter(isDone).length;
     const recall = onThisDay(date, today);
     const journal = journals[date]?.trim();
     return (
@@ -142,8 +179,8 @@ export default function FeedView({
         {evs.length > 0 && (
           <div className="feed-places">
             {evs.slice(0, 4).map((e) => (
-              <span key={e.id} className={`feed-chip${e.done ? " done" : ""}`}>
-                {e.done ? "✓ " : ""}
+              <span key={e.id} className={`feed-chip${isDone(e) ? " done" : ""}`}>
+                {isDone(e) ? "✓ " : ""}
                 {e.title || e.name}
               </span>
             ))}
@@ -289,6 +326,22 @@ export default function FeedView({
             {days.map(dayCard)}
           </>
         )}
+
+        <div className="backup-row">
+          <button onClick={onExport}>⬇ 백업 내보내기</button>
+          <button onClick={() => importRef.current?.click()}>⬆ 가져오기</button>
+          <input
+            ref={importRef}
+            type="file"
+            accept="application/json,.json"
+            hidden
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) onImport(f);
+              if (importRef.current) importRef.current.value = "";
+            }}
+          />
+        </div>
         </div>
       )}
     </main>

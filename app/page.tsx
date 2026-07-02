@@ -20,6 +20,7 @@ import {
 import { eventsOnDate } from "@/lib/recurrence";
 import { buildSchedule, minToHHMM } from "@/lib/schedule";
 import { buildDayCard } from "@/lib/dayCard";
+import { exportBackupBlob, readBackupFile } from "@/lib/backup";
 import { useKakao } from "@/lib/useKakao";
 import KakaoMap from "@/components/KakaoMap";
 import FallbackMap from "@/components/FallbackMap";
@@ -105,6 +106,7 @@ export default function Home() {
   const [modeByStop, setModeByStop] = useState<Record<string, Mode>>({});
   const [journals, setJournals] = useState<Record<string, string>>({});
   const [moods, setMoods] = useState<Record<string, string>>({});
+  const [dones, setDones] = useState<Record<string, boolean>>({}); // key: `${id}|${date}`
   const [mapDate, setMapDate] = useState("");
   const [modal, setModal] = useState<{ ev: Place; isNew: boolean } | null>(null);
   type Loc = { name: string; lat: number; lng: number };
@@ -141,6 +143,12 @@ export default function Home() {
         setStartByDate(d.startByDate ?? {});
         setJournals(d.journals ?? {});
         setMoods(d.moods ?? {});
+        // done: 예전 event.done(마스터 공유) → 날짜별 키로 마이그레이션
+        const dn: Record<string, boolean> = { ...(d.dones ?? {}) };
+        if (Array.isArray(d.events))
+          for (const e of d.events)
+            if (e.done) dn[`${e.id}|${e.date}`] = true;
+        setDones(dn);
       }
     } catch {
       /* 무시 */
@@ -160,9 +168,19 @@ export default function Home() {
         startByDate,
         journals,
         moods,
+        dones,
       })
     );
-  }, [events, modeByStop, startPlace, startByDate, journals, moods, mounted]);
+  }, [
+    events,
+    modeByStop,
+    startPlace,
+    startByDate,
+    journals,
+    moods,
+    dones,
+    mounted,
+  ]);
 
   // 그 날짜의 출발지: 날짜별 지정 > 기본(매일) > 없음
   const originFor = (date: string): Loc | null =>
@@ -265,8 +283,24 @@ export default function Home() {
     () => eventsOnDate(events, mapDate),
     [events, mapDate]
   );
-  const route = useMemo(() => orderRoute(dayPlaces), [dayPlaces]);
-  const manualOrder = dayPlaces.some((p) => p.order != null);
+  // 장소가 있는 일정만 동선/지도에 (장소 없는 일정은 기록에만)
+  const placed = useMemo(
+    () => dayPlaces.filter((p) => p.lat !== 0 || p.lng !== 0),
+    [dayPlaces]
+  );
+  const route = useMemo(() => orderRoute(placed), [placed]);
+  const manualOrder = placed.some((p) => p.order != null);
+  // 기록(다이어리)엔 장소 없는 일정도 포함 (시간/순서로 정렬)
+  const diaryItems = useMemo(
+    () =>
+      [...dayPlaces].sort((a, b) => {
+        const ao = a.order ?? 1e9;
+        const bo = b.order ?? 1e9;
+        if (ao !== bo) return ao - bo;
+        return (a.startTime ?? "99:99").localeCompare(b.startTime ?? "99:99");
+      }),
+    [dayPlaces]
+  );
 
   // 출발지(집)를 넣으면 그 날 경로의 시작점이 되어 첫 일정도 출발/도착 시각이 계산된다.
   const origin = originFor(mapDate);
@@ -403,6 +437,41 @@ export default function Home() {
     setModeByStop((prev) => ({ ...prev, [id]: m }));
   }
 
+  async function exportBackup() {
+    const plan = {
+      events,
+      modeByStop,
+      startPlace,
+      startByDate,
+      journals,
+      moods,
+      dones,
+    };
+    const blob = await exportBackupBlob(plan);
+    const u = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = u;
+    a.download = `aremi-backup-${todayStr()}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(u), 1000);
+  }
+  async function importBackup(file: File) {
+    if (!window.confirm("가져오면 현재 데이터를 덮어써요. 계속할까요?")) return;
+    try {
+      const plan = await readBackupFile(file);
+      setEvents(plan.events ?? []);
+      setModeByStop(plan.modeByStop ?? {});
+      setStartPlace(plan.startPlace ?? null);
+      setStartByDate(plan.startByDate ?? {});
+      setJournals(plan.journals ?? {});
+      setMoods(plan.moods ?? {});
+      setDones(plan.dones ?? {});
+      alert("가져오기 완료!");
+    } catch (e: any) {
+      alert(`가져오기 실패: ${e?.message ?? "파일을 확인해주세요."}`);
+    }
+  }
+
   // 드래그로 순서 바꾸기 → 그 날 이벤트에 수동 order 부여
   function reorderDay(date: string, draggedId: string, targetId: string) {
     if (draggedId === targetId) return;
@@ -459,10 +528,14 @@ export default function Home() {
       return next;
     });
   }
-  function toggleDone(id: string) {
-    setEvents((prev) =>
-      prev.map((e) => (e.id === id ? { ...e, done: !e.done } : e))
-    );
+  function toggleDone(id: string, date: string) {
+    const k = `${id}|${date}`;
+    setDones((prev) => {
+      const n = { ...prev };
+      if (n[k]) delete n[k];
+      else n[k] = true;
+      return n;
+    });
   }
   function openDiary(date: string) {
     setMapDate(date);
@@ -564,12 +637,14 @@ export default function Home() {
             </button>
           </div>
 
-          {route.length === 0 ? (
-            <div className="empty-hint">
-              <p>이 날은 장소가 있는 일정이 없어요.</p>
-            </div>
-          ) : mapMode === "diary" ? (
-            <>
+          {mapMode === "diary" ? (
+            diaryItems.length === 0 ? (
+              <div className="empty-hint">
+                <p>이 날 기록이 없어요.</p>
+                <p className="dim">일정을 추가하거나 기분·일기를 남겨보세요.</p>
+              </div>
+            ) : (
+              <>
               <div className="mood-row">
                 {MOODS.map((m) => (
                   <button
@@ -595,50 +670,44 @@ export default function Home() {
                 </button>
               )}
               <ol className="stops">
-                {fullRoute.map((p, i) => {
-                  const isOrigin = p.id === ORIGIN_ID;
+                {diaryItems.map((p, i) => {
+                  const done = !!dones[`${p.id}|${mapDate}`];
+                  const hasLoc = p.lat !== 0 || p.lng !== 0;
+                  const timed = p.kind === "anchor" && p.startTime;
                   return (
-                    <li
-                      key={p.id}
-                      className={`stop${!isOrigin && p.done ? " done" : ""}`}
-                    >
-                      <div className={`stop-no${isOrigin ? " origin" : ""}`}>
-                        {isOrigin ? "🏠" : hasOrigin ? i : i + 1}
-                      </div>
+                    <li key={p.id} className={`stop${done ? " done" : ""}`}>
+                      <div className="stop-no">{i + 1}</div>
                       <div className="stop-body">
-                        <div className="stop-name">
-                          {isOrigin ? "출발" : p.title || p.name}
-                        </div>
-                        <div className="ev-place">
-                          📍 {p.name}
-                          {!isOrigin && p.kind === "anchor" && p.startTime
-                            ? ` · ${p.startTime}${
-                                p.endTime ? `~${p.endTime}` : ""
-                              }`
-                            : ""}
-                        </div>
-                        {!isOrigin && p.note && (
-                          <div className="diary-memo">📝 {p.note}</div>
+                        <div className="stop-name">{p.title || p.name}</div>
+                        {(hasLoc || timed) && (
+                          <div className="ev-place">
+                            {hasLoc && `📍 ${p.name}`}
+                            {hasLoc && timed && " · "}
+                            {timed &&
+                              `${p.startTime}${p.endTime ? `~${p.endTime}` : ""}`}
+                          </div>
                         )}
-                        {!isOrigin && (
-                          <>
-                            <div className="diary-actions">
-                              <button
-                                className={`done-check${p.done ? " on" : ""}`}
-                                onClick={() => toggleDone(p.id)}
-                              >
-                                {p.done ? "✓ 다녀옴" : "다녀옴"}
-                              </button>
-                            </div>
-                            <PhotoStrip eventId={p.id} date={mapDate} />
-                          </>
-                        )}
+                        {p.note && <div className="diary-memo">📝 {p.note}</div>}
+                        <div className="diary-actions">
+                          <button
+                            className={`done-check${done ? " on" : ""}`}
+                            onClick={() => toggleDone(p.id, mapDate)}
+                          >
+                            {done ? "✓ 다녀옴" : "다녀옴"}
+                          </button>
+                        </div>
+                        <PhotoStrip eventId={p.id} date={mapDate} />
                       </div>
                     </li>
                   );
                 })}
               </ol>
-            </>
+              </>
+            )
+          ) : route.length === 0 ? (
+            <div className="empty-hint">
+              <p>이 날은 장소가 있는 일정이 없어요.</p>
+            </div>
           ) : (
             <>
               {schedule && schedule.worstLateMin > 0 && (
@@ -885,8 +954,11 @@ export default function Home() {
         events={events}
         journals={journals}
         moods={moods}
+        dones={dones}
         onOpen={openDiary}
         onBack={() => setView("plan")}
+        onExport={exportBackup}
+        onImport={importBackup}
       />
     );
   }
