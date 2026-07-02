@@ -34,6 +34,30 @@ export interface Place {
   order?: number;
   /** 다녀옴(방문 완료) 체크 — 다이어리(기록)용 */
   done?: boolean;
+  /** 분류 색 (없으면 kind 기본색) */
+  color?: string;
+}
+
+/** 일정 표시 색 (분류색 우선, 없으면 kind 기본) */
+export function eventColor(p: { color?: string; kind: PlaceKind }): string {
+  return p.color || (p.kind === "anchor" ? "#7c6cff" : "#5b8cff");
+}
+
+/** 배경색 위에 올릴 글자색 (밝으면 검정, 어두우면 흰색) */
+export function textOn(hex: string): string {
+  const h = hex.replace("#", "");
+  const n =
+    h.length === 3
+      ? h
+          .split("")
+          .map((c) => c + c)
+          .join("")
+      : h;
+  const r = parseInt(n.slice(0, 2), 16);
+  const g = parseInt(n.slice(2, 4), 16);
+  const b = parseInt(n.slice(4, 6), 16);
+  const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return lum > 0.62 ? "#1a1a1a" : "#ffffff";
 }
 
 export interface Leg {

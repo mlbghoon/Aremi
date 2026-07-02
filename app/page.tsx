@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Place } from "@/lib/types";
+import { Place, eventColor } from "@/lib/types";
 import { optimizeRoute } from "@/lib/optimize";
 import {
   formatDistance,
@@ -71,6 +71,7 @@ const ENDPOINT: Record<Mode, string> = {
 
 const STORE_KEY = "aremi.plan.v1";
 const ORIGIN_ID = "__origin__";
+const RETURN_ID = "__origin_return__";
 const MOODS = ["😀", "🙂", "😐", "😔", "😢", "🥳", "😴", "🥰"];
 
 function uid(): string {
@@ -306,18 +307,17 @@ export default function Home() {
   const origin = originFor(mapDate);
   const fullRoute = useMemo<Place[]>(() => {
     if (route.length === 0 || !origin) return route;
-    return [
-      {
-        id: ORIGIN_ID,
-        date: mapDate,
-        title: "출발",
-        name: origin.name,
-        lat: origin.lat,
-        lng: origin.lng,
-        kind: "flexible",
-      },
-      ...route,
-    ];
+    const home = (id: string, title: string): Place => ({
+      id,
+      date: mapDate,
+      title,
+      name: origin.name,
+      lat: origin.lat,
+      lng: origin.lng,
+      kind: "flexible",
+    });
+    // 집 출발 → … → 집 귀가 (왕복)
+    return [home(ORIGIN_ID, "출발"), ...route, home(RETURN_ID, "귀가")];
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [route, origin?.lat, origin?.lng, mapDate]);
 
@@ -596,6 +596,15 @@ export default function Home() {
               {route.length}곳 · 이동 약 {totalMin}분
               {totalDist > 0 && <> · {formatDistance(totalDist)}</>}
             </div>
+            {hasOrigin && schedule && schedule.stops.length > 1 && (
+              <div className="topbar-span">
+                🏠 {minToHHMM(schedule.stops[0].departMin)} 출발 ~{" "}
+                {minToHHMM(
+                  schedule.stops[schedule.stops.length - 1].arriveMin
+                )}{" "}
+                귀가
+              </div>
+            )}
           </div>
           <button
             className={`home-btn${origin ? " set" : ""}`}
@@ -675,7 +684,11 @@ export default function Home() {
                   const hasLoc = p.lat !== 0 || p.lng !== 0;
                   const timed = p.kind === "anchor" && p.startTime;
                   return (
-                    <li key={p.id} className={`stop${done ? " done" : ""}`}>
+                    <li
+                      key={p.id}
+                      className={`stop${done ? " done" : ""}`}
+                      style={{ borderLeft: `3px solid ${eventColor(p)}` }}
+                    >
                       <div className="stop-no">{i + 1}</div>
                       <div className="stop-body">
                         <div className="stop-name">{p.title || p.name}</div>
@@ -738,7 +751,8 @@ export default function Home() {
                 const leg = info.legs[i];
                 const st = schedule?.stops[i];
                 const prev = schedule?.stops[i - 1];
-                const isOrigin = p.id === ORIGIN_ID;
+                const isOrigin = p.id === ORIGIN_ID || p.id === RETURN_ID;
+                const isReturn = p.id === RETURN_ID;
                 const evIdx = isOrigin ? -1 : hasOrigin ? i - 1 : i;
                 return (
                   <li
@@ -763,14 +777,16 @@ export default function Home() {
                     </div>
                     <div className="stop-body">
                       <div className="stop-name">
-                        {isOrigin ? "출발" : p.title || p.name}
+                        {isReturn ? "귀가" : isOrigin ? "출발" : p.title || p.name}
                       </div>
                       <div className="ev-place">📍 {p.name}</div>
 
                       {st && isOrigin && (
                         <div className="sched">
                           <span className="sched-arr">
-                            출발 {minToHHMM(st.departMin)}
+                            {isReturn
+                              ? `귀가 ${minToHHMM(st.arriveMin)}`
+                              : `출발 ${minToHHMM(st.departMin)}`}
                           </span>
                         </div>
                       )}

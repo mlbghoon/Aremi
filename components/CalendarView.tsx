@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { Place } from "@/lib/types";
+import { useEffect, useRef, useState } from "react";
+import { Place, eventColor, textOn } from "@/lib/types";
 import { eventsOnDate } from "@/lib/recurrence";
 import {
   addDays,
@@ -209,6 +209,10 @@ function MonthView({
                   <button
                     key={e.id}
                     className={`mv-chip ${e.kind}`}
+                    style={{
+                      background: eventColor(e),
+                      color: textOn(eventColor(e)),
+                    }}
                     onClick={(ev) => {
                       ev.stopPropagation();
                       onOpenEvent(e);
@@ -252,6 +256,27 @@ function TimeGrid({
   for (let h = GRID_START_HOUR; h < GRID_END_HOUR; h++) hours.push(h);
   const bodyH = (GRID_END_HOUR - GRID_START_HOUR) * HOUR_PX;
 
+  // 오늘 시간선 + 자동 스크롤
+  const tgRef = useRef<HTMLDivElement>(null);
+  const scrolledRef = useRef(false);
+  const [nowMin, setNowMin] = useState(-1);
+  const showNow = days.includes(today);
+  useEffect(() => {
+    const upd = () => {
+      const n = new Date();
+      setNowMin(n.getHours() * 60 + n.getMinutes());
+    };
+    upd();
+    const t = setInterval(upd, 60000);
+    return () => clearInterval(t);
+  }, []);
+  useEffect(() => {
+    if (!scrolledRef.current && nowMin >= 0 && showNow && tgRef.current) {
+      tgRef.current.scrollTop = Math.max(0, minToTop(nowMin) - 120);
+      scrolledRef.current = true;
+    }
+  }, [nowMin, showNow]);
+
   function slotClick(e: React.MouseEvent, date: string) {
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const y = e.clientY - rect.top;
@@ -263,7 +288,7 @@ function TimeGrid({
   }
 
   return (
-    <div className="tg">
+    <div className="tg" ref={tgRef}>
       <div className="tg-allday">
         <div className="tg-gutter">종일</div>
         {days.map((d) => (
@@ -274,6 +299,10 @@ function TimeGrid({
                 <button
                   key={e.id}
                   className="tg-allday-chip"
+                  style={{
+                    background: eventColor(e),
+                    color: textOn(eventColor(e)),
+                  }}
                   onClick={() => onOpenEvent(e)}
                 >
                   {e.repeat && e.repeat !== "none" ? "↻ " : ""}
@@ -339,6 +368,9 @@ function TimeGrid({
                       height: h,
                       left: `calc(${(col / cols) * 100}% + 2px)`,
                       width: `calc(${(1 / cols) * 100}% - 4px)`,
+                      background: eventColor(ev),
+                      color: textOn(eventColor(ev)),
+                      borderColor: eventColor(ev),
                     }}
                     onClick={(evt) => {
                       evt.stopPropagation();
@@ -354,6 +386,11 @@ function TimeGrid({
             </div>
           );
         })}
+        {showNow && nowMin >= 0 && (
+          <div className="tg-now" style={{ top: minToTop(nowMin) }}>
+            <span className="tg-now-dot" />
+          </div>
+        )}
       </div>
     </div>
   );

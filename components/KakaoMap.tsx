@@ -76,14 +76,19 @@ export default function KakaoMap({ route, segments, dashed }: Props) {
     // 핀: 원의 정중앙이 실제 좌표에 오도록, 이름표는 absolute로 띄운다
     const hasOrigin = route[0]?.id === "__origin__";
     route.forEach((p, i) => {
-      const isOrigin = p.id === "__origin__";
+      const isOrigin = p.id === "__origin__" || p.id === "__origin_return__";
       const color = isOrigin
         ? "#22c55e"
         : p.kind === "anchor"
         ? "#ef4444"
         : "#1f2937";
       const inner = isOrigin ? "🏠" : String(hasOrigin ? i : i + 1);
-      const label = isOrigin ? "출발" : p.title || p.name;
+      const label =
+        p.id === "__origin_return__"
+          ? "귀가"
+          : p.id === "__origin__"
+          ? "출발"
+          : p.title || p.name;
       const content = document.createElement("div");
       content.style.cssText = "position:relative;font-family:inherit;";
       content.innerHTML = `

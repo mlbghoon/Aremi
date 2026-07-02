@@ -2,6 +2,15 @@
 
 import { useState } from "react";
 import { Place, RepeatRule } from "@/lib/types";
+
+const CATEGORIES: { label: string; color: string }[] = [
+  { label: "기본", color: "" },
+  { label: "업무", color: "#5b8cff" },
+  { label: "개인", color: "#34d399" },
+  { label: "약속", color: "#f472b6" },
+  { label: "볼일", color: "#fbbf24" },
+  { label: "건강", color: "#f87171" },
+];
 import { formatKorean } from "@/lib/date";
 import PlaceSearch, { SearchResult } from "@/components/PlaceSearch";
 
@@ -195,6 +204,26 @@ export default function EventModal({
             </small>
           </div>
         )}
+
+        <div className="field">
+          <span>분류</span>
+          <div className="cat-row">
+            {CATEGORIES.map((c) => (
+              <button
+                key={c.label}
+                className={`cat${(ev.color ?? "") === c.color ? " on" : ""}`}
+                onClick={() => patch({ color: c.color || undefined })}
+              >
+                <i
+                  style={{
+                    background: c.color || "var(--muted)",
+                  }}
+                />
+                {c.label}
+              </button>
+            ))}
+          </div>
+        </div>
 
         <label className="field">
           <span>메모</span>
