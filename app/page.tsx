@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Place, eventColor } from "@/lib/types";
+import { Place, eventColor, type Mode, type Segment } from "@/lib/types";
 import { optimizeRoute } from "@/lib/optimize";
 import {
   formatDistance,
@@ -17,7 +17,7 @@ import {
   onThisDay,
   relativeLabel,
 } from "@/lib/date";
-import { eventsOnDate } from "@/lib/recurrence";
+import { eventsOnDate, eventsOnDateOrdered } from "@/lib/recurrence";
 import { buildSchedule, minToHHMM } from "@/lib/schedule";
 import { buildDayCard } from "@/lib/dayCard";
 import { exportBackupBlob, readBackupFile } from "@/lib/backup";
@@ -29,8 +29,14 @@ import EventModal from "@/components/EventModal";
 import PlaceSearch from "@/components/PlaceSearch";
 import FeedView from "@/components/FeedView";
 import PhotoStrip from "@/components/PhotoStrip";
-
-export type Mode = "car" | "transit" | "walk";
+import SharedCourseView from "@/components/SharedCourseView";
+import {
+  SharedCourse,
+  buildCourse,
+  courseUrl,
+  courseFromHash,
+  importCourse,
+} from "@/lib/shareCourse";
 
 interface Step {
   kind: "subway" | "bus" | "walk";
@@ -44,10 +50,6 @@ interface LegView {
   durationMin: number;
   steps?: Step[];
   note?: string;
-}
-export interface Segment {
-  path: { lat: number; lng: number }[];
-  mode: Mode;
 }
 interface RouteInfo {
   segments: Segment[];
@@ -108,6 +110,7 @@ export default function Home() {
   const [journals, setJournals] = useState<Record<string, string>>({});
   const [moods, setMoods] = useState<Record<string, string>>({});
   const [dones, setDones] = useState<Record<string, boolean>>({}); // key: `${id}|${date}`
+  const [orderByKey, setOrderByKey] = useState<Record<string, number>>({}); // 수동 순서, key: `${id}|${date}`
   const [mapDate, setMapDate] = useState("");
   const [modal, setModal] = useState<{ ev: Place; isNew: boolean } | null>(null);
   type Loc = { name: string; lat: number; lng: number };
@@ -115,6 +118,7 @@ export default function Home() {
   const [startByDate, setStartByDate] = useState<Record<string, Loc>>({}); // 날짜별 출발지
   const [homeOpen, setHomeOpen] = useState(false);
   const [homeScope, setHomeScope] = useState<"day" | "default">("default");
+  const [sharedCourse, setSharedCourse] = useState<SharedCourse | null>(null); // 링크로 받은 코스
   const dragIdRef = useRef<string | null>(null);
 
   // 불러오기 (+ 옛 형식 마이그레이션)
@@ -150,28 +154,42 @@ export default function Home() {
           for (const e of d.events)
             if (e.done) dn[`${e.id}|${e.date}`] = true;
         setDones(dn);
+        // order: 예전 event.order(마스터 공유) → 날짜별 키로 마이그레이션
+        const ob: Record<string, number> = { ...(d.orderByKey ?? {}) };
+        if (Array.isArray(d.events))
+          for (const e of d.events)
+            if (e.order != null) ob[`${e.id}|${e.date}`] = e.order;
+        setOrderByKey(ob);
       }
     } catch {
       /* 무시 */
     }
+    // 링크로 받은 코스가 있으면 읽기 전용 뷰로 연다 (#course=…)
+    const shared = courseFromHash(window.location.hash);
+    if (shared) setSharedCourse(shared);
     setMapDate(todayStr());
     setMounted(true);
   }, []);
 
   useEffect(() => {
     if (!mounted) return;
-    localStorage.setItem(
-      STORE_KEY,
-      JSON.stringify({
-        events,
-        modeByStop,
-        startPlace,
-        startByDate,
-        journals,
-        moods,
-        dones,
-      })
-    );
+    try {
+      localStorage.setItem(
+        STORE_KEY,
+        JSON.stringify({
+          events,
+          modeByStop,
+          startPlace,
+          startByDate,
+          journals,
+          moods,
+          dones,
+          orderByKey,
+        })
+      );
+    } catch {
+      // 용량 초과(QuotaExceededError) 등 — 저장 실패해도 앱은 계속 동작
+    }
   }, [
     events,
     modeByStop,
@@ -180,6 +198,7 @@ export default function Home() {
     journals,
     moods,
     dones,
+    orderByKey,
     mounted,
   ]);
 
@@ -281,8 +300,8 @@ export default function Home() {
   }, [todaySched]);
 
   const dayPlaces = useMemo(
-    () => eventsOnDate(events, mapDate),
-    [events, mapDate]
+    () => eventsOnDateOrdered(events, mapDate, orderByKey),
+    [events, mapDate, orderByKey]
   );
   // 장소가 있는 일정만 동선/지도에 (장소 없는 일정은 기록에만)
   const placed = useMemo(
@@ -472,7 +491,18 @@ export default function Home() {
     }
   }
 
-  // 드래그로 순서 바꾸기 → 그 날 이벤트에 수동 order 부여
+  // 그 날의 방문 순서를 orderByKey(`${id}|${date}`)에 통째로 다시 쓴다.
+  // 이벤트 객체가 아니라 날짜별 키에 저장하므로 반복 일정도 회차마다 순서가 따로 남는다.
+  function writeOrder(date: string, ordered: Place[]) {
+    setOrderByKey((prev) => {
+      const next = { ...prev };
+      ordered.forEach((e, i) => {
+        next[`${e.id}|${date}`] = i;
+      });
+      return next;
+    });
+  }
+  // 드래그로 순서 바꾸기 → 그 날 수동 순서 부여
   function reorderDay(date: string, draggedId: string, targetId: string) {
     if (draggedId === targetId) return;
     const ordered = [...route];
@@ -481,19 +511,16 @@ export default function Home() {
     if (from < 0 || to < 0) return;
     const [moved] = ordered.splice(from, 1);
     ordered.splice(to, 0, moved);
-    const orderById = new Map(ordered.map((e, i) => [e.id, i]));
-    setEvents((prev) =>
-      prev.map((e) =>
-        e.date === date && orderById.has(e.id)
-          ? { ...e, order: orderById.get(e.id) }
-          : e
-      )
-    );
+    writeOrder(date, ordered);
   }
   function clearOrder(date: string) {
-    setEvents((prev) =>
-      prev.map((e) => (e.date === date ? { ...e, order: undefined } : e))
-    );
+    // 그 날짜(`|${date}`)의 수동 순서만 지운다 → 다시 자동 최적화
+    setOrderByKey((prev) => {
+      const suffix = `|${date}`;
+      const next: Record<string, number> = {};
+      for (const k in prev) if (!k.endsWith(suffix)) next[k] = prev[k];
+      return next;
+    });
   }
   // ▲▼ 로 한 칸 이동 (터치에서도 동작)
   function moveStop(date: string, id: string, dir: -1 | 1) {
@@ -502,14 +529,7 @@ export default function Home() {
     const to = from + dir;
     if (from < 0 || to < 0 || to >= ordered.length) return;
     [ordered[from], ordered[to]] = [ordered[to], ordered[from]];
-    const orderById = new Map(ordered.map((e, i) => [e.id, i]));
-    setEvents((prev) =>
-      prev.map((e) =>
-        e.date === date && orderById.has(e.id)
-          ? { ...e, order: orderById.get(e.id) }
-          : e
-      )
-    );
+    writeOrder(date, ordered);
   }
   function setHome(loc: Loc) {
     if (homeScope === "day")
@@ -577,8 +597,78 @@ export default function Home() {
     else setStartPlace(null);
   }
 
+  // ── 코스 공유 (링크) ──
+  async function shareCourseLink() {
+    if (route.length === 0) {
+      window.alert("공유할 코스가 없어요. 장소가 있는 일정을 먼저 추가하세요.");
+      return;
+    }
+    const course = buildCourse({ date: mapDate, route, modeOf });
+    const url = courseUrl(course);
+    const nav = navigator as any;
+    if (nav.share) {
+      try {
+        await nav.share({ title: course.title || "동선 코스", url });
+      } catch {
+        /* 사용자가 취소 */
+      }
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(url);
+      window.alert("공유 링크를 복사했어요.");
+    } catch {
+      window.prompt("이 링크를 복사해 공유하세요", url);
+    }
+  }
+
+  function clearCourseHash() {
+    if (typeof window === "undefined") return;
+    history.replaceState(
+      null,
+      "",
+      window.location.pathname + window.location.search
+    );
+  }
+  // 받은 코스를 내 캘린더에 담는다 (내 출발지 기준으로 이후 재계산됨)
+  function importSharedCourse() {
+    if (!sharedCourse) return;
+    const target =
+      sharedCourse.date >= todayStr() ? sharedCourse.date : todayStr();
+    const { events: evs, modeByStop: modes, orderByKey: ord } = importCourse(
+      sharedCourse,
+      target,
+      uid
+    );
+    setEvents((prev) => [...prev, ...evs]);
+    setModeByStop((prev) => ({ ...prev, ...modes }));
+    setOrderByKey((prev) => ({ ...prev, ...ord }));
+    clearCourseHash();
+    setSharedCourse(null);
+    setMapDate(target);
+    setView("plan");
+    window.alert(
+      `코스를 ${formatKorean(target)}에 담았어요. 출발지·이동시간은 내 기준으로 다시 계산돼요.`
+    );
+  }
+  function closeSharedCourse() {
+    clearCourseHash();
+    setSharedCourse(null);
+  }
+
   if (!mounted) {
     return <main className="cal-screen" />;
+  }
+
+  // 링크로 받은 코스: 읽기 전용 뷰
+  if (sharedCourse) {
+    return (
+      <SharedCourseView
+        course={sharedCourse}
+        onImport={importSharedCourse}
+        onClose={closeSharedCourse}
+      />
+    );
   }
 
   // ================= 동선(MAP) 화면 =================
@@ -746,6 +836,9 @@ export default function Home() {
                   <span className="dim">끌어서 순서를 바꿀 수 있어요</span>
                 )}
               </div>
+              <button className="course-share-btn" onClick={shareCourseLink}>
+                🔗 이 코스 공유하기
+              </button>
               <ol className="stops">
               {fullRoute.map((p, i) => {
                 const leg = info.legs[i];
@@ -971,6 +1064,7 @@ export default function Home() {
         journals={journals}
         moods={moods}
         dones={dones}
+        orderByKey={orderByKey}
         onOpen={openDiary}
         onBack={() => setView("plan")}
         onExport={exportBackup}

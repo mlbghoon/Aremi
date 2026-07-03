@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { Place } from "@/lib/types";
-import type { Mode, Segment } from "@/app/page";
+import type { Mode, Segment } from "@/lib/types";
 
 interface Props {
   route: Place[];

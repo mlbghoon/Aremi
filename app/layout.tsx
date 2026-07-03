@@ -12,8 +12,7 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
+  // 핀치 줌은 열어둔다 (접근성 WCAG 1.4.4 — 저시력 사용자가 확대할 수 있어야 함)
   themeColor: "#3b82f6",
 };
 

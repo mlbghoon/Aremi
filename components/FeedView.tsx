@@ -12,7 +12,7 @@ import {
   monthTitle,
 } from "@/lib/date";
 import { photoStore } from "@/lib/photos";
-import { eventsOnDate } from "@/lib/recurrence";
+import { eventsOnDate, eventsOnDateOrdered } from "@/lib/recurrence";
 import MemoryMap, { Pin } from "@/components/MemoryMap";
 
 interface Props {
@@ -20,6 +20,7 @@ interface Props {
   journals: Record<string, string>;
   moods: Record<string, string>;
   dones: Record<string, boolean>;
+  orderByKey: Record<string, number>;
   onOpen: (date: string) => void;
   onBack: () => void;
   onExport: () => void;
@@ -33,6 +34,7 @@ export default function FeedView({
   journals,
   moods,
   dones,
+  orderByKey,
   onOpen,
   onBack,
   onExport,
@@ -43,7 +45,9 @@ export default function FeedView({
 
   // 반복 일정도 반영 (eventsOnDate)
   const dayEvents = (d: string) =>
-    eventsOnDate(events, d).sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
+    eventsOnDateOrdered(events, d, orderByKey).sort(
+      (a, b) => (a.order ?? 999) - (b.order ?? 999)
+    );
   const hasContent = (d: string) =>
     eventsOnDate(events, d).length > 0 ||
     !!journals[d]?.trim() ||

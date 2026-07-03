@@ -1,5 +1,14 @@
 export type PlaceKind = "anchor" | "flexible";
 
+/** 이동수단 */
+export type Mode = "car" | "transit" | "walk";
+
+/** 지도에 그릴 구간: 폴리라인 + 이동수단 */
+export interface Segment {
+  path: { lat: number; lng: number }[];
+  mode: Mode;
+}
+
 /** 반복 규칙 */
 export type RepeatRule = "none" | "daily" | "weekdays" | "weekly";
 

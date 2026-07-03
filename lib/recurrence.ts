@@ -29,3 +29,20 @@ export function eventsOnDate(events: Place[], dateStr: string): Place[] {
   }
   return out;
 }
+
+/**
+ * 그 날짜의 이벤트를 돌려주되, 수동 순서(order)를 날짜별 override 맵에서 해석해 붙인다.
+ * order는 이벤트 객체가 아니라 `${id}|${date}` 키 맵(orderByKey)에 저장한다.
+ * → 반복 일정이라도 회차(날짜)마다 순서를 따로 가질 수 있다.
+ * orderByKey에 없는 이벤트의 order는 undefined(=자동 최적화 대상)로 정규화한다.
+ */
+export function eventsOnDateOrdered(
+  events: Place[],
+  dateStr: string,
+  orderByKey: Record<string, number>
+): Place[] {
+  return eventsOnDate(events, dateStr).map((p) => ({
+    ...p,
+    order: orderByKey[`${p.id}|${dateStr}`],
+  }));
+}

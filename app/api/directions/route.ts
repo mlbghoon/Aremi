@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { readPoints } from "@/lib/reqPoints";
 
 /**
  * 카카오모빌리티 "다중 경유지 길찾기"를 호출해 실제 도로 경로를 돌려준다.
@@ -17,13 +18,11 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  let points: { lat: number; lng: number }[] = [];
-  try {
-    const body = await req.json();
-    points = Array.isArray(body?.points) ? body.points : [];
-  } catch {
-    return NextResponse.json({ path: [], error: "잘못된 요청" }, { status: 200 });
+  const parsed = await readPoints(req);
+  if (!parsed.ok) {
+    return NextResponse.json({ path: [], error: parsed.error }, { status: 200 });
   }
+  const points = parsed.points;
 
   if (points.length < 2) {
     return NextResponse.json({ path: [] }, { status: 200 });

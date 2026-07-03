@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { haversine, roughWalkMinutes } from "@/lib/geo";
+import { readPoints } from "@/lib/reqPoints";
 
 /**
  * TMap 보행자 경로 API로 실제 도보 경로(인도 기준)를 받아온다.
@@ -18,16 +19,14 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  let points: { lat: number; lng: number }[] = [];
-  try {
-    const body = await req.json();
-    points = Array.isArray(body?.points) ? body.points : [];
-  } catch {
+  const parsed = await readPoints(req);
+  if (!parsed.ok) {
     return NextResponse.json(
-      { path: [], legs: [], error: "잘못된 요청" },
+      { path: [], legs: [], error: parsed.error },
       { status: 200 }
     );
   }
+  const points = parsed.points;
 
   if (points.length < 2) {
     return NextResponse.json({ path: [], legs: [] }, { status: 200 });

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import https from "https";
+import { readPoints } from "@/lib/reqPoints";
 
 /**
  * ODsay "대중교통 길찾기"로 각 구간의 지하철/버스 경로를 받아온다.
@@ -21,13 +22,11 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  let points: { lat: number; lng: number }[] = [];
-  try {
-    const body = await req.json();
-    points = Array.isArray(body?.points) ? body.points : [];
-  } catch {
-    return NextResponse.json({ legs: [], error: "잘못된 요청" }, { status: 200 });
+  const parsed = await readPoints(req);
+  if (!parsed.ok) {
+    return NextResponse.json({ legs: [], error: parsed.error }, { status: 200 });
   }
+  const points = parsed.points;
 
   if (points.length < 2) {
     return NextResponse.json({ legs: [] }, { status: 200 });
