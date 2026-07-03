@@ -206,9 +206,6 @@ export default function FeedView({
   return (
     <main className="cal-screen">
       <header className="app-bar row">
-        <button className="icon-back" onClick={onBack} aria-label="뒤로">
-          ←
-        </button>
         <div className="app-bar-title">
           <h1>돌아보기</h1>
           <span className="app-bar-sub">지난 날들을 다시 보기</span>

@@ -30,6 +30,7 @@ import PlaceSearch from "@/components/PlaceSearch";
 import FeedView from "@/components/FeedView";
 import PhotoStrip from "@/components/PhotoStrip";
 import SharedCourseView from "@/components/SharedCourseView";
+import BottomNav from "@/components/BottomNav";
 import {
   SharedCourse,
   buildCourse,
@@ -679,6 +680,20 @@ export default function Home() {
     setSharedCourse(null);
   }
 
+  // 하단 탭바 전환. 동선은 항상 route 모드로, 날짜는 현재 mapDate 유지(첫 진입=오늘).
+  function goTab(tab: View) {
+    if (tab === "map") {
+      setMapMode("route");
+      track("route_view", { stops: placed.length });
+    }
+    if (tab === "feed") track("feed_view");
+    setView(tab);
+  }
+  // 동선 화면에서 하루씩 이동 (어제/내일 동선 보기)
+  function stepDay(delta: number) {
+    setMapDate((d) => addDays(d || todayStr(), delta));
+  }
+
   if (!mounted) {
     return <main className="cal-screen" />;
   }
@@ -698,10 +713,15 @@ export default function Home() {
   if (view === "map") {
     const hasOrigin = fullRoute[0]?.id === ORIGIN_ID;
     return (
+      <>
       <main className="route-screen">
         <div className="route-topbar">
-          <button className="icon-back" onClick={() => setView("plan")} aria-label="뒤로">
-            ←
+          <button
+            className="day-step"
+            onClick={() => stepDay(-1)}
+            aria-label="이전 날"
+          >
+            ‹
           </button>
           <div className="route-topbar-info">
             <div className="topbar-date">{formatKorean(mapDate)}</div>
@@ -719,6 +739,13 @@ export default function Home() {
               </div>
             )}
           </div>
+          <button
+            className="day-step"
+            onClick={() => stepDay(1)}
+            aria-label="다음 날"
+          >
+            ›
+          </button>
           <button
             className={`home-btn${origin ? " set" : ""}`}
             onClick={() => {
@@ -1076,12 +1103,15 @@ export default function Home() {
           </div>
         )}
       </main>
+      <BottomNav active="map" onSelect={goTab} />
+      </>
     );
   }
 
   // ================= 돌아보기(FEED) 화면 =================
   if (view === "feed") {
     return (
+      <>
       <FeedView
         events={events}
         journals={journals}
@@ -1093,26 +1123,20 @@ export default function Home() {
         onExport={exportBackup}
         onImport={importBackup}
       />
+      <BottomNav active="feed" onSelect={goTab} />
+      </>
     );
   }
 
   // ================= 달력(PLAN) 화면 =================
   return (
+    <>
     <main className="cal-screen">
       <header className="app-bar row">
         <div className="app-bar-title">
           <h1>Aremi (동선)</h1>
           <span className="app-bar-sub">일정 + 지도</span>
         </div>
-        <button
-          className="feed-btn"
-          onClick={() => {
-            track("feed_view");
-            setView("feed");
-          }}
-        >
-          🕘 돌아보기
-        </button>
       </header>
 
       {recallDay && (
@@ -1160,6 +1184,8 @@ export default function Home() {
         />
       )}
     </main>
+    <BottomNav active="plan" onSelect={goTab} />
+    </>
   );
 }
 

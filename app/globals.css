@@ -80,7 +80,8 @@ body {
 
 /* ================= 달력 화면 ================= */
 .cal-screen {
-  height: 100%;
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   background: var(--app);
@@ -425,7 +426,8 @@ body {
 
 /* ================= 동선(route) 화면 ================= */
 .route-screen {
-  height: 100%;
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   background: var(--app);
@@ -2200,4 +2202,59 @@ body {
   color: var(--muted);
   font-size: 14px;
   cursor: pointer;
+}
+
+/* ── 하단 탭바 ── */
+.bottom-nav {
+  flex: none;
+  display: flex;
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.bn-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 0 7px;
+  border: none;
+  background: none;
+  color: var(--faint);
+  cursor: pointer;
+}
+.bn-icon {
+  font-size: 20px;
+  line-height: 1;
+  filter: grayscale(1);
+  opacity: 0.7;
+}
+.bn-label {
+  font-size: 11px;
+  font-weight: 600;
+}
+.bn-item.on {
+  color: var(--accent-2);
+}
+.bn-item.on .bn-icon {
+  filter: none;
+  opacity: 1;
+}
+
+/* ── 동선 화면 날짜 스텝퍼 ── */
+.day-step {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+.day-step:active {
+  background: var(--surface);
 }
