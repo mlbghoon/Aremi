@@ -37,6 +37,7 @@ import {
   courseFromHash,
   importCourse,
 } from "@/lib/shareCourse";
+import { track } from "@vercel/analytics";
 
 interface Step {
   kind: "subway" | "bus" | "walk";
@@ -166,7 +167,10 @@ export default function Home() {
     }
     // 링크로 받은 코스가 있으면 읽기 전용 뷰로 연다 (#course=…)
     const shared = courseFromHash(window.location.hash);
-    if (shared) setSharedCourse(shared);
+    if (shared) {
+      setSharedCourse(shared);
+      track("course_open", { stops: shared.stops.length });
+    }
     setMapDate(todayStr());
     setMounted(true);
   }, []);
@@ -442,17 +446,25 @@ export default function Home() {
   }
 
   function saveEvent(ev: Place) {
+    const exists = events.some((e) => e.id === ev.id);
+    track(exists ? "event_edit" : "event_create", {
+      kind: ev.kind,
+      hasPlace: ev.lat !== 0 || ev.lng !== 0,
+      repeat: ev.repeat ?? "none",
+    });
     setEvents((prev) => {
-      const exists = prev.some((e) => e.id === ev.id);
-      return exists ? prev.map((e) => (e.id === ev.id ? ev : e)) : [...prev, ev];
+      const has = prev.some((e) => e.id === ev.id);
+      return has ? prev.map((e) => (e.id === ev.id ? ev : e)) : [...prev, ev];
     });
   }
 
   function deleteEvent(id: string) {
+    track("event_delete");
     setEvents((prev) => prev.filter((e) => e.id !== id));
   }
 
   function setStopMode(id: string, m: Mode) {
+    track("mode_change", { mode: m });
     setModeByStop((prev) => ({ ...prev, [id]: m }));
   }
 
@@ -511,6 +523,7 @@ export default function Home() {
     if (from < 0 || to < 0) return;
     const [moved] = ordered.splice(from, 1);
     ordered.splice(to, 0, moved);
+    track("reorder", { method: "drag" });
     writeOrder(date, ordered);
   }
   function clearOrder(date: string) {
@@ -529,9 +542,11 @@ export default function Home() {
     const to = from + dir;
     if (from < 0 || to < 0 || to >= ordered.length) return;
     [ordered[from], ordered[to]] = [ordered[to], ordered[from]];
+    track("reorder", { method: "button" });
     writeOrder(date, ordered);
   }
   function setHome(loc: Loc) {
+    track("home_set", { scope: homeScope });
     if (homeScope === "day")
       setStartByDate((prev) => ({ ...prev, [mapDate]: loc }));
     else setStartPlace(loc);
@@ -558,11 +573,13 @@ export default function Home() {
     });
   }
   function openDiary(date: string) {
+    track("diary_view");
     setMapDate(date);
     setMapMode("diary");
     setView("map");
   }
   async function shareDay() {
+    track("day_share");
     const blob = await buildDayCard({
       date: mapDate,
       events: route,
@@ -606,6 +623,11 @@ export default function Home() {
     const course = buildCourse({ date: mapDate, route, modeOf });
     const url = courseUrl(course);
     const nav = navigator as any;
+    track("course_share", {
+      stops: route.length,
+      hasAnchor: route.some((p) => p.kind === "anchor"),
+      method: nav.share ? "native" : "copy",
+    });
     if (nav.share) {
       try {
         await nav.share({ title: course.title || "동선 코스", url });
@@ -633,6 +655,7 @@ export default function Home() {
   // 받은 코스를 내 캘린더에 담는다 (내 출발지 기준으로 이후 재계산됨)
   function importSharedCourse() {
     if (!sharedCourse) return;
+    track("course_import", { stops: sharedCourse.stops.length });
     const target =
       sharedCourse.date >= todayStr() ? sharedCourse.date : todayStr();
     const { events: evs, modeByStop: modes, orderByKey: ord } = importCourse(
@@ -1081,7 +1104,13 @@ export default function Home() {
           <h1>Aremi (동선)</h1>
           <span className="app-bar-sub">일정 + 지도</span>
         </div>
-        <button className="feed-btn" onClick={() => setView("feed")}>
+        <button
+          className="feed-btn"
+          onClick={() => {
+            track("feed_view");
+            setView("feed");
+          }}
+        >
           🕘 돌아보기
         </button>
       </header>
@@ -1104,6 +1133,11 @@ export default function Home() {
         }
         onCreate={openCreate}
         onViewRoute={(date) => {
+          track("route_view", {
+            stops: eventsOnDate(events, date).filter(
+              (p) => p.lat !== 0 || p.lng !== 0
+            ).length,
+          });
           setMapDate(date);
           setMapMode("route");
           setView("map");
